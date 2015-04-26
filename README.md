@@ -26,7 +26,7 @@ Here's a listing of the scripts:
   * [bin/ebs_backup](bin/ebs_backup)
   
     Wrapper around [ec2-consistent-snapshot](https://github.com/alestic/ec2-consistent-snapshot) for managing AWS EBS volume  Snapshots, including EBS
-    volumes that used as physical volumes in an LVM configuration. This script also manages retention periods of the snapshots.
+    volumes that are used as physical volumes in an LVM configuration. This script also manages retention periods of the snapshots.
 
   * [bin/db_backup](bin/db_backup)
 
