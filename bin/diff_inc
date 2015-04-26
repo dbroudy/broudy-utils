@@ -1,0 +1,107 @@
+#!/bin/sh
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+DIFF="diff"
+MERGE="patch -s"
+COMPRESS="gzip"
+
+function usage() {
+cat <<EOF >&2
+Usage: $(basename $0) [-h] [-v] [-c] [-d diff type] base [new]
+  -h:       help
+  -v:       verbose
+  -c:       write output to stdout instead of new incremental file
+  -d:       specify diff/merge program: diff (default), xdelta
+  base:     base filename (and path) from which others are derived
+  new:      new data to be backed up (stdin if missing)
+EOF
+exit $1
+}
+
+# configuration
+args=$(getopt hvcd: $*) 
+[ $? -eq 0 ] || usage 10
+set -- $args
+for i
+  do
+    case "$i" in
+    -h) usage; shift;;
+    -v) verbose=1; shift;;
+    -c) cat=1; shift;;
+    -d) 
+      if [ "$2" = "diff"]; then
+      elif [ "$2" = "xdelta" ]; then
+        DIFF="xdelta delta"
+        MERGE="xdelta patch"
+        COMPRESS="cat"
+      else
+        usage 10
+      fi
+      shift 2;;
+    --) shift; break;;
+    esac
+  done
+
+if [ $# -eq 1 ]; then
+  base=$1
+elif [ $# -eq 2 ]; then 
+  base=$1
+  exec <$2
+else
+  usage 10
+fi
+
+ver=${base}.ver
+lck=${base}.lck
+
+dotlockfile -lp -r1 $lck || ( echo "$0: Could not lock $lck" >&2; exit 11 )
+trap "dotlockfile -up $lck; exit $?" INT TERM EXIT
+
+#find version 
+if [ -e $ver ]; then
+  version=$(($(cat $ver)))
+else
+  [ "$verbose" ] && echo "No basis for diff, creating" >&2
+  version=-1
+  cat >$base
+  echo -n $((version + 1)) > $ver
+fi
+
+if [ $version -ge 0 ]; then
+  #copy full to temp file
+  tmp=$(mktemp) || ( echo "$0: Could not create temp file" >&2; exit 12 )
+  cp $base $tmp
+
+  #for each incremental path temp file
+  for (( v=1 ; v <= version ; v++ )); do
+    [ "$verbose" ] && echo "patching incremental $v" >&2
+    $MERGE $tmp ${base}.inc.${v}
+  done
+
+  # setup output
+  if [ "$cat" -ne 1 ]; then
+    inc=${base}.inc.$((++version))
+    [ "$verbose" ] && echo "Writing incremental $inc" >&2
+    exec > $inc
+  fi
+
+  #diff new file with temp file into new incremental
+  $DIFF $tmp -
+  rm $tmp
+
+  # version and compress incremental
+  if [ "$cat" -ne 1 ]; then
+    echo -n $version > $ver
+    #  gzip $inc
+  fi
+fi
+
+# version is updated and incremental is written
+dotlockfile -up $lck
+trap - INT TERM EXIT
+
+
+#create restore file for range
+
+#clean old incrementals

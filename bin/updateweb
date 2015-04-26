@@ -1,0 +1,41 @@
+#!/bin/sh -e
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+function onerror() {
+  echo $1
+  return 1;
+}
+
+
+function onexit() {
+  true
+}
+
+trap onexit EXIT INT QUIT TSTP
+exec 2>&1 >>/var/log/subversion/updateweb.log 
+
+SVN="/usr/bin/svn -q"
+CONFIGTEST="/usr/bin/sudo /usr/sbin/apache2ctl configtest"
+GRACEFUL="/usr/bin/sudo /usr/sbin/apache2ctl graceful"
+
+echo "============================================================"
+date
+#cat
+sleep 2
+umask 0002
+
+(
+  while [ "$1" ]; do 
+    DEST=$1
+    [ -d "$DEST" -a -w "$DEST/." ] || onerror "Invalid destination $DEST"
+    cd $DEST || onerror "Cannot change to directory $DEST"
+    $SVN update || onerror "Error updating from SVN"
+    echo "Website located in $DEST updated"
+    shift
+  done
+
+  $CONFIGTEST || onerror "Error in apache config, skipping restart"
+  $GRACEFUL || onerror "Error restarting apache, may be in inconsistent state"
+)&
+

@@ -1,0 +1,18 @@
+#!/bin/bash
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+LEARN="nice sa-learn -u amavis --dbpath /var/lib/amavis/.spamassassin/"
+
+echo "Learning Spam"
+find /broudy/hosted/mail/broudy.net -type d -name .Junk \
+  -exec test -d {}/cur \; -print \
+  -exec $LEARN --no-sync --spam {}/cur \;
+
+echo "Learning Ham"
+find /broudy/hosted/mail/broudy.net -type d -name Maildir \
+  -exec test -d {}/cur \; -print \
+  -exec $LEARN --no-sync --ham {}/cur \;
+
+echo "Syncing Databases"
+$LEARN --sync

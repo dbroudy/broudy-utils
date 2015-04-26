@@ -1,0 +1,35 @@
+#!/bin/sh
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+function cleanup() {
+	kdestroy
+	unlog
+}
+
+trap cleanup INT QUIT EXIT TSTP
+
+kinit -k # use host key
+aklog -setpag
+
+CELL=broudy.net
+TRANS=common/repl/krb5kdc/slave_datatrans
+TMP_TRANS=/var/lib/krb5kdc/slave_datatrans
+VOL=f.common
+UTIL=/usr/sbin/kdb5_util
+
+case "$1" in
+	master)
+		DATA=/afs/.${CELL}/${TRANS}
+		$UTIL dump $DATA
+		vos release ${VOL} -localauth >/dev/null
+		;;
+	slave)
+		DATA=/afs/${CELL}/${TRANS}
+		cp $DATA ${TMP_TRANS}
+		$UTIL load $TMP_TRANS
+		;;
+	*)
+		echo "Usage: $0 {master|slave}"
+		;;
+esac

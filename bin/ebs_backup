@@ -1,0 +1,163 @@
+#!/usr/bin/perl
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+use strict;
+use warnings;
+use LWP::Simple;
+use Time::Piece;
+
+my $CFG = "/etc/aws/bnenv";
+my $mysql_defaults='/etc/mysql/debian.cnf';
+my $WEEK = 7*24*60*60;
+
+if (not exists($ENV{'EC2_PRIVATE_KEY'}) and -f $CFG) {
+    @ARGV = map {s/'/'"'"'/g; "'$_'"} @ARGV;
+    exec <<"END";
+        . '$CFG'
+        PATH=/sbin:/usr/sbin:\$PATH
+        exec    $0  @ARGV;
+END
+    die "This should never happen.";
+}
+
+my $instance=get('http://169.254.169.254/latest/meta-data/instance-id');
+my $region=get('http://169.254.169.254/latest/meta-data/placement/availability-zone');
+$region =~ s/([0-9])[a-z]*$/$1/;
+my $endpoint="https://ec2.$region.amazonaws.com";
+my $host=`hostname`;
+chomp($host);
+my $snapDate=localtime->datetime;
+
+my $newLevel;
+if (localtime->mday == 1) {
+  $newLevel = 'full';
+} elsif (localtime->wday == 1) {
+  $newLevel = 'differential';
+} else {
+  $newLevel = 'incremental';
+}
+
+open(VOLS, sprintf('ec2dvol --url "%s" -HF "attachment.instance-id=%s" |', $endpoint, $instance))
+  or die "Can't retrieve volumes: $!";
+my %vols;
+foreach (<VOLS>) {
+  next if (not m:^ATTACHMENT\s*([a-z0-9-]*)\s*[a-z0-9-]*\s*(/dev/sd|/dev/xvd)([a-z0-9-/]*):);
+  $vols{$3} = $1;
+}
+close(VOLS);
+
+#print "AVAILABLE VOLUMES\n";
+#print join("\n", keys(%vols)) . "\n";
+
+my %dump_vgs;
+
+open(FSTAB, '</etc/fstab') or die "Can't list mounts: $!";
+foreach (<FSTAB>) {
+  my ($origdev, $mp, $fstype, $options, $dump) = split;
+  next if not ($dump > 0);
+
+  my $vg = qx|lvs --noheadings -o vg_name $origdev 2>/dev/null|;
+  $vg =~ s/\s//g;
+  if ($vg) {
+    if (exists($dump_vgs{$vg})) {
+      push(@{$dump_vgs{$vg}{'mps'}}, $mp);
+      push(@{$dump_vgs{$vg}{'lvs'}}, $origdev);
+    } else {
+      my @pvs = split($/, qx|vgs --noheadings -o pv_name $vg|);
+      s/\s*//g for @pvs;
+      $dump_vgs{$vg}{'pvs'} = \@pvs;
+      $dump_vgs{$vg}{'mps'} = [$mp];
+      $dump_vgs{$vg}{'lvs'} = [$origdev];
+    }
+  } else {
+    do_snap([$origdev], [$mp], has_mysql($origdev));
+  }
+}
+close(FSTAB);
+
+foreach my $vg (keys(%dump_vgs)) {
+  my $any_mysql = 0;
+  foreach (@{$dump_vgs{$vg}{'pvs'}}) {
+    if (has_mysql($_)) {
+      $any_mysql = 1;
+      last;
+    }
+  }
+  do_snap($dump_vgs{$vg}{'pvs'}, $dump_vgs{$vg}{'mps'}, $any_mysql);
+}
+
+sub has_mysql {
+  my $chk = shift @_;
+  my $mnt;
+  my ($junk, $dir) = split(/\s+/, qx|mysql --defaults-file=$mysql_defaults -BNe 'show variables like "datadir"'|);
+  return 0 if not $dir;
+  open(DF, "df $dir |") or die "Can't find disks: $!";
+  foreach (<DF>) {
+    next if (not m|^/|);
+    ($mnt) = split(/\s+/);
+    last;
+  }
+  close(DF);
+  return $mnt eq $chk;
+}
+
+sub do_snap {
+  my ($origdevs, $mps, $has_mysql) = @_;
+
+  my @vols;
+  foreach my $origdev (@$origdevs) {
+    my $dev=$origdev;
+    $dev =~ s:(/dev/sd|/dev/xvd)::;
+    print "BACKUP $origdev";
+
+    if (not exists($vols{$dev})) {
+      print " NO VOLUME FOUND\n";
+      next;
+    } else {
+      push(@vols, $vols{$dev});
+    }
+    
+  }
+  printf(" (%s) ", join(' ', @vols));
+  
+  my $desc = sprintf("EBS Backup %s (%s at %s)", join(' ', @$mps), $host, $snapDate);
+
+  my $args = "";
+  foreach my $mp (@$mps) {
+    $args .= " --freeze-filesystem $mp" if $mp and $mp ne '/';
+  }
+  $args .= " --mysql  --mysql-defaults-file=$mysql_defaults" if $has_mysql;
+  $args .= " --region $region";
+  $args .= " --description \"$desc\"";
+  $args .= ' ' . join(' ', @vols);
+
+  #printf("\nec2-consistent-snapshot $args\n");
+  my @snaps = split(/\s+/, qx|ec2-consistent-snapshot $args|);
+  printf("SNAP %s\n", join(' ', @snaps));
+  foreach my $snap (@snaps) {
+    system("ec2addtag", $snap, '--tag', "level=$newLevel") == 0 or die "Could not tag snapshot $snap: $!\n";
+  }
+
+  foreach my $level ('incremental', 'differential', 'full') {
+    foreach my $vol (@vols) {
+      open(SNAPS, "ec2dsnap -F 'volume-id=$vol' -F tag:level=$level |") or die "Can't list snapshots: $!";
+      foreach (<SNAPS>) {
+        next if not m!^SNAPSHOT\s+([a-z0-9-]+)\s+[a-z0-9-]+\s+[a-z0-9-/]+\s+([a-zT0-9-/:\+]+)\s+[a-z0-9-%]+\s+[0-9]+\s+[0-9]+\s+.*! ;
+
+        my ($snap, $time) = ($1, Time::Piece->strptime($2, "%FT%T%z"));
+        if (($level eq 'full' && $time->add_months(6) < localtime)
+            || ($level eq 'differential' && $time + 6*$WEEK < localtime)
+            || ($level eq 'incremental' && $time + 2*$WEEK < localtime))
+        {
+          printf("DELETE %s@%s from %s\n", $snap, $level, $time);
+          system("ec2delsnap", "$snap") == 0 or die "Can't delete snapshot $snap: $!";
+        }
+
+      }
+      close(SNAPS);
+    }
+  }
+
+}
+

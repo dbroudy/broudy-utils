@@ -1,0 +1,10 @@
+#!/bin/sh
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+DIST=/broudy/common/distfiles
+LOCAL=/etc/logcheck/ignore.d.server
+
+for i in $(find $DIST/$LOCAL $LOCAL -name 'local_*' |sed -e 's/.*\///'|sort |uniq); do 
+  diff -c $DIST/$LOCAL/$i $LOCAL/$i
+done

@@ -1,0 +1,104 @@
+#!/bin/sh
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+usage () {
+cat <<EOF >&2
+Usage: $(basename $0) [-h] [-v] [-c] [-r days] -t type dir
+  -h:       help
+  -v:       verbose
+  -r:       remove files older than days
+  -c:       write output to stdout instead of new incremental file
+  -t:       specify backup type: postgresql, mysql, slapd
+  dir:      directory to store backup (date or incremental version will be appended)
+EOF
+exit $1
+}
+
+# configuration
+verbose=0
+remove=0
+cat=0
+dump_pg=0
+dump_mysql=0
+dump_slapd=0
+args=$(getopt hvcr:t: $*) 
+[ $? -eq 0 ] || usage 10
+set -- $args
+for i
+  do
+    case "$i" in
+    -h) usage; shift;;
+    -v) verbose=1; shift;;
+    -c) cat=1; shift;;
+    -r) remove=$2; shift 2;;
+    -t) 
+      if [ "$2" = "postgresql" ]; then
+        dump_pg=1
+      elif [ "$2" = "mysql" ]; then
+        dump_mysql=1
+      elif [ "$2" = "slapd" ]; then
+        dump_slapd=1
+      else
+        echo "$(basename $0): unknown type ${2}"
+        usage 10
+      fi
+      shift 2;;
+    --) shift; break;;
+    esac
+  done
+
+if [ $# -eq 1 ]; then
+  DIR=$1
+else
+  usage 10
+fi
+
+if [ ! -w $DIR -o ! -d $DIR ]; then
+  echo "${DIR}: must be a writeable directory"
+  usage 10
+fi
+
+if [ $remove -lt 0 ]; then
+  echo $remove must be a positive number of days
+  usage 10
+elif [ $remove -gt 0 ]; then
+  find $DIR -mtime +${remove} -print0 |xargs -0 rm -f
+fi
+
+DATE=$(date +%Y%m%d)
+
+# postgres
+if [ "$dump_pg" -eq 1 ]; then
+  for pgc in $(pg_lsclusters -h |awk '{print $1 "/" $2}'); do
+    pgc_label=$(echo $pgc|sed -e 's/\//_/')
+    [ "$verbose" -eq 1 ] && echo "Backing up postgresql global objects in cluster $pgc" >&2
+    [ "$cat" -eq 1 ] || exec > $DIR/pg.${pgc_label}.global.${DATE}.sql.gz
+    /usr/bin/pg_dumpall --cluster $pgc -U postgres -g |gzip --rsyncable
+    for db in $(echo "select datname from pg_database where datname not in ('template0')" |psql --cluster $pgc -U postgres -d template1 -q -t); do
+      [ "$verbose" -eq 1 ] && echo "Backing up postgresql $db database in cluster $pgc" >&2
+      [ "$cat" -eq 1 ] || exec > $DIR/pg.${pgc_label}.${db}.${DATE}.tar.gz
+      /usr/bin/pg_dump --cluster $pgc -U postgres --format=t --blobs $db |gzip --rsyncable
+    done
+  done
+fi
+
+# mysql
+if [ "$dump_mysql" -eq 1 ]; then
+#user
+#password
+  for db in $(echo "show databases;" |mysql --defaults-file=/etc/mysql/debian.cnf -s|grep -vi information_schema); do 
+    [ "$verbose" -eq 1 ] && echo "Backing up mysql ${db} database" >&2
+    [ "$cat" -eq 1 ] || exec > $DIR/mysql.${db}.${DATE}.gz
+    mysqldump --events --defaults-file=/etc/mysql/debian.cnf --opt $db |gzip --rsyncable 
+  done
+fi
+
+# ldap
+if [ "$dump_slapd" -eq 1 ]; then
+    [ "$verbose" -eq 1 ] && echo "Backing up slapd database" >&2
+    [ "$cat" -eq 1 ] || exec > $DIR/slapd.config.${DATE}.gz
+    /usr/sbin/slapcat -n 0 |gzip --rsyncable
+    [ "$cat" -eq 1 ] || exec > $DIR/slapd.${DATE}.gz
+    /usr/sbin/slapcat |gzip --rsyncable
+fi

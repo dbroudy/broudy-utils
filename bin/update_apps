@@ -1,0 +1,22 @@
+#!/bin/sh
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+#apps=$(realpath $(dirname $0))
+apps=/broudy/apps
+indep=/broudy/.indep
+
+for a in $apps/* $apps/bin/*; do
+	if [ ! -e $a ] || `readlink -f $a |grep -F $indep >/dev/null`; then
+		rm $a
+	fi
+done
+
+for i in $indep/bin/*; do
+	ln -s $i $apps/bin
+done
+for i in $indep/*; do
+  [ $i == $indep/bin ] && continue
+  [ -d $i ] || continue
+	ln -s $i $apps
+done

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+if [ $# -lt 1 ]; then
+	echo "No host specified"
+	exit
+fi
+host=$1
+date=`date +%Y-%m-%d`
+
+ssh -l root $host "cd / && (find . -fstype ext3 -o -fstype ext2 | cpio -o -H crc | bzip2 -c)" > $host-$date-backup.cpio.bz2
+

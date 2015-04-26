@@ -1,0 +1,43 @@
+#!/bin/bash
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+LEARN="nice sa-learn -u amavis --prefs-file=/dev/null --dbpath /var/lib/amavis/.spamassassin/"
+LOG=/var/log/dovecot-sa-learn.log
+F=/tmp/sa-learn-msg-$$.txt
+
+exec 2>> $LOG
+set -e
+
+cleanup() {
+  rm -f $F
+}
+error() {
+  local parent_lineno="$1"
+  local message="$2"
+  local code="${3:-1}"
+  if [[ -n "$message" ]] ; then
+    echo "Error on or near line ${parent_lineno}: ${message}; exiting with status ${code}" >> $LOG
+  else
+    echo "Error on or near line ${parent_lineno}; exiting with status ${code}" >> $LOG
+  fi
+  exit "${code}"
+}
+
+trap cleanup EXIT
+trap 'error ${LINENO}' ERR
+
+umask 0077
+
+echo "$$-start ($*)" >> $LOG
+
+cat<&0 > $F
+
+grep -i '^Message-Id: ' $F >> $LOG || true 
+
+$LEARN --no-sync $* $F >> $LOG
+
+
+echo "$$-end" >> $LOG
+
+exit 0

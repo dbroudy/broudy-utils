@@ -1,0 +1,93 @@
+#!/usr/bin/perl
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+# Snapshot
+# Remote Backup
+# Full Backup
+# Incremental Backup
+
+use warnings;
+use strict;
+
+sub _system {
+	print "  ==> ";
+	print @_;
+	print "\n";
+	return 0;
+}
+sub t_system {
+	_system();
+	sleep(1);
+	return system(@_);
+}
+
+my $dev="/dev/st0";
+my $nr_dev="/dev/nst0";
+my $MAX_SNAPS = 0;
+
+my %fss;
+open(FSTAB, "/etc/fstab") or die "The system is really messed up: $!\n";
+
+while (my $line = <FSTAB>) {
+	chomp($line);
+	next if ($line =~ /^\s*#/);
+	next if ($line =~ /^\s*$/);
+
+	#($fs, $mount, $type, @opt) = split("[, ]+", $line);
+	#$pass = @opt[$#opt];
+	#$#opt--;
+	#$dump = @opt[$#opt];
+	#$#opt--;
+
+	my ($fs, $mount, $type, $opt, $dump, $pass) = split(/ +/, $line);
+	if (($type eq "ext2" or $type eq "ext3") and $dump != 0 ) {
+		$fss{$dump} = $fs;
+	}
+}
+close FSTAB;
+
+
+system("mt -f $dev rewind") == 0
+	or die "Could not rewind tape $dev\nIt's probably offline\n";
+
+system("modprobe dm-snapshot") == 0
+	or die "Could not load snapshot module\n";
+
+foreach my $f (sort keys %fss) {
+	print "Spanshot $fss{$f}: ";
+	$_ = `lvs --sep , --units m --noheadings --nosuffix --opt vg_name,lv_name,lv_size,origin $fss{$f} 2>/dev/null`;
+	if ($? == 0) {
+		s/ //g;
+		my ($vg_name, $lv_name, $lv_size, $origin) = split(/,/);
+
+		my ($old_lv_name, $snap_lv_name);
+		$snap_lv_name = sprintf("%s_p%d", $lv_name, $MAX_SNAPS);
+		system("lvremove -f /dev/$vg_name/$snap_lv_name") == 0
+			or warn "Could not remove snapshot $vg_name/$snap_lv_name: $!\n";
+		#print("D");
+		for (my $snap=$MAX_SNAPS; $snap>0; $snap--) {
+			$old_lv_name = $snap_lv_name;
+			$snap_lv_name = sprintf("%s_p%d", $lv_name, $snap-1);
+
+			_system("lvrename /dev/$vg_name/$snap_lv_name /dev/$vg_name/$old_lv_name") == 0
+				or warn "Could not rename snapshot $vg_name $snap_lv_name to $old_lv_name: $!\n";
+			#print("M");
+		}
+		system(sprintf("lvcreate --snapshot --size %ldm --name %s %s",
+					$lv_size * 0.10, $snap_lv_name, $fss{$f})) == 0
+			or die "Could not create snapshot $vg_name/$snap_lv_name: $!\n";
+		#print("N");
+		$fss{$f} = $snap_lv_name;
+		print " OK\n";
+	} else {
+		print "FAILED\n";
+	}
+
+	print "Dumping $fss{$f}\n";
+	system("/sbin/dump -0 -a -u -h 0 -f $nr_dev $fss{$f}") == 0
+		or die "Could not backup $fss{$f} to $nr_dev\n";
+}
+system("mt -f $dev offline") == 0
+	or die "Error placing tape $dev offline\n";
+

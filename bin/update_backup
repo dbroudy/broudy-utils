@@ -1,0 +1,13 @@
+#!/bin/sh
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+for i in `vos listvldb |grep '^[a-z]'`; do
+	d="/afs/.broudy.net/backup/$i"
+	if [ -e $d ]; then
+		echo "$i already has mount point"
+	else
+		fs mkm $d $i.backup
+	fi
+done
+

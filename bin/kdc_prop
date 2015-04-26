@@ -1,0 +1,10 @@
+#!/bin/sh
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+DATA=/var/lib/krb5kdc/slave_datatrans
+/usr/sbin/kdb5_util dump $DATA
+
+for slave in pan.broudy.net; do
+	/usr/sbin/kprop -d -f $DATA $slave  || echo "Error propagating to $slave"
+done

@@ -1,0 +1,34 @@
+#!/usr/bin/perl
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+$dev="/dev/st0";
+$nr_dev="/dev/nst0";
+
+open(FSTAB, "/etc/fstab") or die "The system is really messed up: $!\n";
+
+while ($line = <FSTAB>) {
+	chomp($line);
+	next if ($line =~ /^#/);
+	($fs, $mount, $type, @opt) = split("[, ]+", $line);
+	$pass = @opt[$#opt];
+	$#opt--;
+	$dump = @opt[$#opt];
+	$#opt--;
+	if (($type eq "ext2" or $type eq "ext3") and $dump != 0 ) {
+		$fss{$dump} = $fs;
+	}
+}
+close FSTAB;
+
+system("mt -f $nr_dev eod") == 0
+	or die "Could not position tape $dev\nIt's probably offline\n";
+
+foreach $f (sort keys %fss) {
+	print STDERR "Dumping $fss{$f}\n";
+	system("/sbin/dump -5 -a -u -h 0 -f $nr_dev $fss{$f}") == 0
+		or die "Could not backup $fss{$f} to $nr_dev\n";
+}
+system("mt -f $dev offline") == 0
+	or die "Error placing tape $dev offline\n";
+

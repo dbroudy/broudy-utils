@@ -1,0 +1,137 @@
+#!/usr/bin/perl
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+use warnings;
+use strict;
+
+use Date::Format;
+
+my $cur_date = time2str("%Y%m%d", time);
+
+sub _system {
+  print "  ==> ";
+  print @_;
+  print "\n";
+  return 0;
+}
+sub t_system {
+  _system();
+  sleep(1);
+  return system(@_);
+}
+
+sub ismounted {
+  my ($dev) = @_;
+  my $rval = 0;
+  open(MOUNT, "/proc/mounts") or die "Could not open mounts: $!\n";
+  while (<MOUNT>) {
+    s/ .*//;
+    if ($dev eq $_) {
+      $rval = 1;
+      last;
+    }
+  }
+  close(MOUNT);
+  return $rval;
+}
+
+sub lvremove {
+  my ($lv) = @_;
+  if (ismounted($lv->{dev})) {
+    _system("umount $lv->{dev}") == 0
+      or warn "Count not umount $lv->{dev}: $!\n";
+  }
+  _system("lvremove -f $lv->{dev}") == 0
+    or warn "Could not remove snapshot $lv->{vg_name}/$lv->{lv_name}: $!\n";
+}
+
+sub lvsnapshot {
+  my ($dev) = @_;
+  my $snap_lv_name = sprintf("%s_d%d", $dev->{lv}{lv_name}, $cur_date);
+  _system(sprintf("lvcreate --snapshot --size %ldm --name %s %s",
+        $dev->{lv}{lv_size} * 0.10, $snap_lv_name, $dev->{lv}{dev})) == 0
+    or die "Could not create snapshot $dev->{lv}{vg_name}/$snap_lv_name: $!\n";
+  _system("mount $dev->{lv}{dev}") == 0
+    or warn "Count not mount $dev->{lv}{dev}: $!\n";
+}
+
+my %lvs;
+my $lvstr = `lvs --sep , --units m --noheadings --nosuffix --opt vg_name,lv_name,lv_size,origin,lv_attr 2>/dev/null`;
+if ($? == 0) {
+  foreach (split(/\n/, $lvstr)) {
+    s/^ *//m;
+    my ($vg_name, $lv_name, $lv_size, $origin, $attr) = split(/,/);
+    my $date = -1;
+    $date = $1 if ($lv_name =~ /${origin}_d([0-9]{8})/);
+
+    my ($attr_type, $attr_perm, $attr_alloc, $attr_minor, $attr_state, $attr_open) = split(//, $attr);
+    my $dev = "/dev/$vg_name/$lv_name";
+    $lvs{$dev} = {
+      dev           => $dev,
+      vg_name       => $vg_name,
+      lv_name       => $lv_name,
+      lv_size       => $lv_size,
+      origin        => $origin,
+      attr          => $attr,
+      is_snap       => lc($attr_type) eq 's',
+      is_invalid    => $attr_type eq 'S',
+      is_origin     => $attr_type eq 'o',
+      perm          => $attr_perm,
+      date          => $date
+    };
+  }
+}
+
+my %fs;
+open(FSTAB, "/etc/fstab") or die "Could not open fstab: $!\n";
+
+while (my $line = <FSTAB>) {
+  chomp($line);
+  next if ($line =~ /^\s*#/);
+  next if ($line =~ /^\s*$/);
+
+  my ($dev, $mount, $type, $opt, $max_snaps, $pass) = split(/ +/, $line);
+  if (($type eq "ext2" or $type eq "ext3")) {
+    my ($junk1, $junk2, $vg_name, $lv_name) = split(m|/|, $dev);
+
+    my $lv;
+    my $snaps = [];
+    if (exists($lvs{$dev})) {
+       $lv = $lvs{$dev};
+      foreach my $search (values(%lvs)) {
+        if ($search->{is_snap}
+          and $search->{origin} eq $lv->{lv_name}
+          and $search->{vg_name} eq $lv->{vg_name})
+        {
+          if ($search->{is_invalid} or (
+              defined($search->{date}) and $search->{date} > 0 and $search->{date} < ($cur_date - $max_snaps - 1)
+              ))
+          {
+            lvremove($search);
+          } else {
+            push(@{$snaps}, $search);
+          }
+        }
+      }
+      @{$snaps} = sort {$b->{date} <=> $a->{date}} @{$snaps};
+    }
+
+    $fs{$dev} = {
+      dev         => $dev,
+      mount       => $mount,
+      max_snaps   => $max_snaps,
+      pass        => $pass,
+      lv          => $lv,
+      snaps       => $snaps
+    };
+  }
+}
+close FSTAB;
+
+
+foreach my $dev (sort keys %fs) {
+  if (exists($fs{$dev}{lv}{dev})) {
+    lvsnapshot($fs{$dev});
+  }
+}

@@ -1,0 +1,36 @@
+#!/bin/sh -e
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+function onerror() {
+  echo $1
+  return 1;
+}
+
+
+function onexit() {
+  true
+}
+
+trap onexit EXIT INT QUIT TSTP
+
+SVN="/usr/bin/svn -q"
+CONFIGTEST="/usr/bin/sudo /usr/sbin/apache2ctl configtest"
+GRACEFUL="/usr/bin/sudo /usr/sbin/apache2ctl graceful"
+
+PATH=$1
+DEST=$2
+#UPDATES=$4
+
+umask 0002
+
+[ -d "$DEST" -a -w "$DEST" ] || onerror "Invalid destination $DEST"
+
+cd $DEST || onerror "Cannot change to directory $DEST"
+rm -rf $DEST/{,.[a-z]}* || onerror "Error removing old web site"
+$SVN export -r $TAG -d . $PATH || onerror "Error exporting from SVN"
+
+$CONFIGTEST || onerror "Error in apache config, skipping restart"
+$GRACEFUL || onerror "Error restarting apache, may be in inconsistent state"
+
+echo "Website located in $DEST was successfully updated"
