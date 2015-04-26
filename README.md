@@ -1,36 +1,28 @@
 # broudy-utils
 A bunch of Linux (and some MacOS) utils in Bash (and some Perl, Python)
 
-Introduction
-------------
-
+##Introduction
 These files represent some scripts that I've found useful over the years. Some
 are really simple and I just include them to a have a single point of
 distribution. Others might make good starting point for things you want to
 accomplish. I used a liberal license so you can use them as you see fit.
 
-Configuration
--------------
+##Configuration
 The simpler scripts generally don't have much configuration. They may even have
 assumptions about my environment and harded coded paths (Oi, The Horror!). The
 more sophisticated scripts (e.g. the ones you might actually want to reuse) try
 to have arguments, and might even validate that you're passing something
 logical when you call them.
 
-Usage
------
-
+##Usage
 It's doubtful that you'll want to clone this whole repo and use it wholesale,
 but I clone this to /broudy/common on all my servers and add /broudy/common/bin
 to my path.
 
-Scripts
--------
-
+##Scripts
 Here's a listing of the scripts:
 
-  Backup Scripts
-  ~~~~~~~~~~~~~~
+###Backup Scripts
   * [bin/ebs_backup](bin/ebs_backup)
   
     Script for backing up AWS EBS volumes using Snapshots, including EBS
@@ -63,25 +55,25 @@ Here's a listing of the scripts:
     
     Backup script from my brief dalliance with AFS(http://www.openafs.org)
 
-  Spam Utilities
-  ~~~~~~~~~~~~~~
+###Spam Utilities
   * [bin/dovecot-sa-learn](bin/dovecot-sa-learn)
 
-    Used as a pipe backend to dovecot's antispam system::
+    Used as a pipe backend to dovecot's antispam system:
 
+    ```
       antispam_pipe_tmpdir = /tmp
 
       antispam_pipe_program = /broudy/common/bin/dovecot-sa-learn
       antispam_pipe_program_args =
       antispam_pipe_program_spam_arg = --spam
       antispam_pipe_program_notspam_arg = --ham
-
+    ```
+    
   * [bin/spam_learn](bin/spam_learn)
 
     Trains amavis (spam assassin) via a Maildir with a Junk folder
 
-  Kerberos Admin
-  ~~~~~~~~~~~~~~
+###Kerberos Admin
   * [bin/kdc_prop](bin/kdc_prop)
 
     Script to propegate KDC information to slaves. I found this problematic
@@ -91,8 +83,8 @@ Here's a listing of the scripts:
 
     Replicate KDC information via AFS.
 
-  File Distribution
-  ~~~~~~~~~~~~~~~~~
+###File Distribution
+
   * [bin/update_apps](bin/update_apps)
 
     Part of a scheme I had to maintain an automounted directory of
@@ -112,8 +104,7 @@ Here's a listing of the scripts:
 
     SVN hook to deploy web application.
 
-  Miscellaneous
-  ~~~~~~~~~~~~~
+###Miscellaneous
   * [bin/diff_inc](bin/diff_inc)
 
     No idea what this was supposed to do, but I'm sure I found it useful at
