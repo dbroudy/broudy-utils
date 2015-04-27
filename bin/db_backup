@@ -90,7 +90,7 @@ if [ "$dump_mysql" -eq 1 ]; then
   for db in $(echo "show databases;" |mysql --defaults-file=/etc/mysql/debian.cnf -s|grep -vi information_schema); do 
     [ "$verbose" -eq 1 ] && echo "Backing up mysql ${db} database" >&2
     [ "$cat" -eq 1 ] || exec > $DIR/mysql.${db}.${DATE}.gz
-    mysqldump --events --defaults-file=/etc/mysql/debian.cnf --opt $db |gzip --rsyncable 
+    mysqldump --defaults-file=/etc/mysql/debian.cnf --events --opt $db |gzip --rsyncable 
   done
 fi
 
