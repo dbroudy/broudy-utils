@@ -22,6 +22,7 @@ cat=0
 dump_pg=0
 dump_mysql=0
 dump_slapd=0
+dump_krb5=0
 args=$(getopt hvcr:t: $*) 
 [ $? -eq 0 ] || usage 10
 set -- $args
@@ -39,6 +40,8 @@ for i
         dump_mysql=1
       elif [ "$2" = "slapd" ]; then
         dump_slapd=1
+      elif [ "$2" = "krb5" ]; then
+        dump_krb5=1
       else
         echo "$(basename $0): unknown type ${2}"
         usage 10
@@ -101,4 +104,11 @@ if [ "$dump_slapd" -eq 1 ]; then
     /usr/sbin/slapcat -n 0 |gzip --rsyncable
     [ "$cat" -eq 1 ] || exec > $DIR/slapd.${DATE}.gz
     /usr/sbin/slapcat |gzip --rsyncable
+fi
+
+# krb5
+if [ "$dump_krb5" -eq 1 ]; then
+    [ "$verbose" -eq 1 ] && echo "Backing up krb5 database" >&2
+    [ "$cat" -eq 1 ] || exec > $DIR/krb5.${DATE}.gz
+    /usr/sbin/kdb5_util dump -recurse |gzip --rsyncable
 fi
