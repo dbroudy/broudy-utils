@@ -1,0 +1,54 @@
+#!/usr/bin/perl
+# Copyright (C) 2015  BroudyNET LLC
+# Published under terms of MIT License, see LICENSE file for details
+
+use strict;
+use warnings;
+use LWP::Simple;
+use Net::Amazon::EC2;
+
+my $CFG = "/etc/aws/env";
+
+if (not exists($ENV{'AWS_ACCESS_KEY_ID'}) and -f $CFG) {
+    @ARGV = map {s/'/'"'"'/g; "'$_'"} @ARGV;
+    exec <<"END";
+        . '$CFG'
+        PATH=/sbin:/usr/sbin:\$PATH
+        exec    $0  @ARGV;
+END
+    die "This should never happen.";
+}
+
+if ($#ARGV != 0) {
+  print "Usage: vol4dev <device>\n";
+  exit 1;
+}
+my $matchdev = $ARGV[0];
+$matchdev =~ s:(/dev/sd|/dev/xvd)::;
+
+my $instance=get('http://169.254.169.254/latest/meta-data/instance-id');
+my $region=get('http://169.254.169.254/latest/meta-data/placement/availability-zone');
+$region =~ s/([0-9])[a-z]*$/$1/;
+
+my $ec2 = Net::Amazon::EC2->new(
+  AWSAccessKeyId => $ENV{'AWS_ACCESS_KEY_ID'},
+  SecretAccessKey => $ENV{'AWS_SECRET_ACCESS_KEY'},
+  region => $region,
+  debug => 0
+);
+
+foreach my $vol (@{$ec2->describe_volumes}) {
+  foreach my $att (@{$vol->attachments}) {
+    if ($att->instance_id eq $instance) {
+      my $dev = $att->device;
+      $dev =~ s:(/dev/sd|/dev/xvd)::;
+      if ($matchdev eq $dev) {
+        printf("%s\n", $att->volume_id);
+        exit 0;
+      }
+    }
+  }
+}
+
+print "No volume found\n";
+exit 1;

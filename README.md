@@ -34,6 +34,10 @@ Here's a listing of the scripts:
     do this for quick mid-day backups as these tend to change a lot more often
     than the filesystem.
 
+  * [bin/vol4dev](bin/vol4dev)
+    
+    Identify which EBS volume is attached to the current instance as a specific device.
+
   * [bin/full_backup](bin/full_backup)
 
     Old script I used when I had tapes. Also takes a snapshot using LVM.
