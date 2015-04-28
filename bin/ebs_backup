@@ -15,7 +15,7 @@ my $RETAIN_FULL = 6; # months
 my $RETAIN_DIFF = 6; # weeks
 my $RETAIN_INC  = 2; # weeks
 
-if (not exists($ENV{'EC2_PRIVATE_KEY'}) and -f $CFG) {
+if (not exists($ENV{'AWS_ACCESS_KEY_ID'}) and -f $CFG) {
     @ARGV = map {s/'/'"'"'/g; "'$_'"} @ARGV;
     exec <<"END";
         . '$CFG'
@@ -67,6 +67,8 @@ my %dump_vgs;
 
 open(FSTAB, '</etc/fstab') or die "Can't list mounts: $!";
 foreach (<FSTAB>) {
+  s/#.*//;
+  next if /^\s*$/;
   my ($origdev, $mp, $fstype, $options, $dump) = split;
   next if not ($dump > 0);
 
@@ -103,6 +105,8 @@ foreach my $vg (keys(%dump_vgs)) {
 sub has_mysql {
   my $chk = shift @_;
   my $mnt;
+  return 0 if not -r $mysql_defaults;
+
   my ($junk, $dir) = split(/\s+/, qx|mysql --defaults-file=$mysql_defaults -BNe 'show variables like "datadir"'|);
   return 0 if not $dir;
   open(DF, "df $dir |") or die "Can't find disks: $!";
@@ -158,7 +162,9 @@ sub do_snap {
       foreach my $snap (@{$snaps}) {
         my $time = $snap->start_time;
         $time =~ s/\.[0-9]*Z$//;
-        $time = Time::Piece->strptime($time, "%FT%T");
+        next if $time =~ /^\s*$/;
+        #printf("TIME %s\n", $time);
+        $time = Time::Piece->strptime($time, "%Y-%m-%dT%H:%M:%S");
         #printf("MAYBE DELETE %s@%s from %s\n", $snap->snapshot_id, $level, $time);
         if (($level eq 'full' && $time->add_months($RETAIN_FULL) < localtime)
             || ($level eq 'differential' && $time + $RETAIN_DIFF*$WEEK < localtime)
