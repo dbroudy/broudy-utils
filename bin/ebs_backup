@@ -6,10 +6,14 @@ use strict;
 use warnings;
 use LWP::Simple;
 use Time::Piece;
+use Net::Amazon::EC2;
 
-my $CFG = "/etc/aws/bnenv";
+my $CFG = "/etc/aws/env";
 my $mysql_defaults='/etc/mysql/debian.cnf';
-my $WEEK = 7*24*60*60;
+
+my $RETAIN_FULL = 6; # months
+my $RETAIN_DIFF = 6; # weeks
+my $RETAIN_INC  = 2; # weeks
 
 if (not exists($ENV{'EC2_PRIVATE_KEY'}) and -f $CFG) {
     @ARGV = map {s/'/'"'"'/g; "'$_'"} @ARGV;
@@ -21,13 +25,20 @@ END
     die "This should never happen.";
 }
 
+my $WEEK = 7*24*60*60;
 my $instance=get('http://169.254.169.254/latest/meta-data/instance-id');
 my $region=get('http://169.254.169.254/latest/meta-data/placement/availability-zone');
 $region =~ s/([0-9])[a-z]*$/$1/;
-my $endpoint="https://ec2.$region.amazonaws.com";
 my $host=`hostname`;
 chomp($host);
 my $snapDate=localtime->datetime;
+
+my $ec2 = Net::Amazon::EC2->new(
+  AWSAccessKeyId => $ENV{'AWS_ACCESS_KEY_ID'},
+  SecretAccessKey => $ENV{'AWS_SECRET_ACCESS_KEY'},
+  region => $region,
+  debug => 0
+);
 
 my $newLevel;
 if (localtime->mday == 1) {
@@ -38,14 +49,16 @@ if (localtime->mday == 1) {
   $newLevel = 'incremental';
 }
 
-open(VOLS, sprintf('ec2dvol --url "%s" -HF "attachment.instance-id=%s" |', $endpoint, $instance))
-  or die "Can't retrieve volumes: $!";
 my %vols;
-foreach (<VOLS>) {
-  next if (not m:^ATTACHMENT\s*([a-z0-9-]*)\s*[a-z0-9-]*\s*(/dev/sd|/dev/xvd)([a-z0-9-/]*):);
-  $vols{$3} = $1;
+foreach my $vol (@{$ec2->describe_volumes}) {
+  foreach my $att (@{$vol->attachments}) {
+    if ($att->instance_id eq $instance) {
+      my $dev = $att->device;
+      $dev =~ s:(/dev/sd|/dev/xvd)::;
+      $vols{$dev} = $att->volume_id;
+    }
+  }
 }
-close(VOLS);
 
 #print "AVAILABLE VOLUMES\n";
 #print join("\n", keys(%vols)) . "\n";
@@ -136,26 +149,26 @@ sub do_snap {
   my @snaps = split(/\s+/, qx|ec2-consistent-snapshot $args|);
   printf("SNAP %s\n", join(' ', @snaps));
   foreach my $snap (@snaps) {
-    system("ec2addtag", $snap, '--tag', "level=$newLevel") == 0 or die "Could not tag snapshot $snap: $!\n";
+    $ec2->create_tags(ResourceId => $snap, Tags => { level => $newLevel });
   }
 
   foreach my $level ('incremental', 'differential', 'full') {
     foreach my $vol (@vols) {
-      open(SNAPS, "ec2dsnap -F 'volume-id=$vol' -F tag:level=$level |") or die "Can't list snapshots: $!";
-      foreach (<SNAPS>) {
-        next if not m!^SNAPSHOT\s+([a-z0-9-]+)\s+[a-z0-9-]+\s+[a-z0-9-/]+\s+([a-zT0-9-/:\+]+)\s+[a-z0-9-%]+\s+[0-9]+\s+[0-9]+\s+.*! ;
-
-        my ($snap, $time) = ($1, Time::Piece->strptime($2, "%FT%T%z"));
-        if (($level eq 'full' && $time->add_months(6) < localtime)
-            || ($level eq 'differential' && $time + 6*$WEEK < localtime)
-            || ($level eq 'incremental' && $time + 2*$WEEK < localtime))
+      my $snaps = $ec2->describe_snapshots(Filter => [['volume-id', $vol], ['tag:level', $level]]);
+      foreach my $snap (@{$snaps}) {
+        my $time = $snap->start_time;
+        $time =~ s/\.[0-9]*Z$//;
+        $time = Time::Piece->strptime($time, "%FT%T");
+        #printf("MAYBE DELETE %s@%s from %s\n", $snap->snapshot_id, $level, $time);
+        if (($level eq 'full' && $time->add_months($RETAIN_FULL) < localtime)
+            || ($level eq 'differential' && $time + $RETAIN_DIFF*$WEEK < localtime)
+            || ($level eq 'incremental' && $time + $RETAIN_INC*$WEEK < localtime))
         {
-          printf("DELETE %s@%s from %s\n", $snap, $level, $time);
-          system("ec2delsnap", "$snap") == 0 or die "Can't delete snapshot $snap: $!";
+          printf("DELETE %s@%s from %s\n", $snap->snapshot_id, $level, $time);
+          $ec2->delete_snapshot(SnapshotId => $snap->snapshot_id);
         }
 
       }
-      close(SNAPS);
     }
   }
 
